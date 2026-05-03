@@ -9,6 +9,8 @@ export async function POST(req: Request) {
 
   if (!userUid) {
     return NextResponse.json({ error: "Missing user UID" }, { status: 400 });
+  } else {
+    console.log("Remote user uid", userUid)
   }
 
   if (!channelName) {
@@ -26,8 +28,6 @@ export async function POST(req: Request) {
   const expirationTimeInSeconds = 3600;
   const currentTimeStamp = Math.floor(Date.now() / 1000);
   const tokenExpireTime = currentTimeStamp + expirationTimeInSeconds;
-
-  //   const token = createToken(channelName, uid);
 
   const token = createToken(channelName, Number(agentUid));
   console.log("MY TOKEN", token);
@@ -75,13 +75,12 @@ export async function POST(req: Request) {
     const data = await res.json();
 
     if (!res.ok) {
-      // 👇 handle conflict properly
       if (res.status === 409) {
         console.log("Agent already running, continuing...");
 
         return NextResponse.json({
           agent: data,
-          agentUid, // still return this!
+          agentUid,
           alreadyRunning: true,
         });
       }

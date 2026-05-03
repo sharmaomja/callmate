@@ -20,7 +20,7 @@ export function createToken(channelName: string, uid: number) {
   appId,
   certificate,
   channelName,
-  String(uid),
+  String(uid), // required conversion
   RtcRole.PUBLISHER,
   tokenExpireTime,
   privilageExpireTime
