@@ -1,174 +1,179 @@
 "use client";
-export {};
+
+/*
+ * This page creates a video call room using Agora and also connects to an AI agent that the user can talk to.
+ 
+ * Key Flows:
+ * 1. Create a token and join an Agora channel.
+ * 2. Enable local capture and publish the media to Agora's SD-RTN.
+ * 3. Subscribe to other users(Remote participants).
+ * 4. Request an AI agent to get injected in the channel after join.
+ * 5. Let user talk to AI using "Push to talk" button.
+ */
 
 import { useEffect, useRef, useState } from "react";
-import { client, createTracks } from "@/lib/agora";
-import type { IAgoraRTCRemoteUser } from "agora-rtc-sdk-ng";
-import { useParams } from "next/navigation";
+import {
+  LocalVideoTrack,
+  RemoteAudioTrack,
+  useJoin,
+  useLocalCameraTrack,
+  useLocalMicrophoneTrack,
+  usePublish,
+  useRemoteAudioTracks,
+  useRemoteUsers,
+} from "agora-rtc-react";
+import { useParams, useRouter } from "next/navigation";
 import { RemoteUsers } from "@/components/remoteusers";
-import type {
-  ICameraVideoTrack,
-  IMicrophoneAudioTrack,
-} from "agora-rtc-sdk-ng";
+import AgoraClientProvider from "@/components/AgoraClientProvider";
 
 export default function RoomPage() {
   const params = useParams();
   const roomId = params.roomId as string;
-  const localVideoRef = useRef<HTMLDivElement>(null);
-  const hasUserJoined = useRef<boolean>(false);
-  const audioTrackRef = useRef<IMicrophoneAudioTrack | null>(null);
-  const videoTrackRef = useRef<ICameraVideoTrack | null>(null);
-  const [isTalkingToAI, setIsTalkingToAI] = useState(false);
+
+  // Pass down the Agora client object without prop-drilling.
+  return (
+    <AgoraClientProvider>
+      <RoomContent roomId={roomId} />
+    </AgoraClientProvider>
+  );
+}
+
+function RoomContent({ roomId }: { roomId: string }) {
+  const [isTalkingToAI, setIsTalkingToAI] = useState(false); // For push-to-talk
   const [agentStatus, setAgentStatus] = useState("Connecting AI...");
+  const hasInitializedMic = useRef(false);
+  const hasStartedAgent = useRef(false);
+  const router = useRouter();
 
-  const [remoteUsers, setRemoteUsers] = useState<IAgoraRTCRemoteUser[]>([]);
+  const appId = process.env.NEXT_PUBLIC_AGORA_APP_ID; // Agora appId comes from here
+  const joinReady = Boolean(appId && roomId); // Only join when we have all the required variables
 
+  // Fetch a token from the backend and join the channel
+  const { data: joinedUid, isConnected } = useJoin(async () => {
+    const res = await fetch(`/api/agora/token?channel=${roomId}`);
+    const data = await res.json();
+
+    return {
+      appid: appId!,
+      channel: roomId,
+      token: data.token,
+      uid: data.uid,
+    };
+  }, joinReady);
+
+  const { localMicrophoneTrack } = useLocalMicrophoneTrack(joinReady); // Gets local mic
+  const { localCameraTrack } = useLocalCameraTrack(joinReady); // Gets local camera
+
+  // Publish audio & video to SD-RTN
+  usePublish(
+    [localMicrophoneTrack, localCameraTrack],
+    Boolean(isConnected && localMicrophoneTrack && localCameraTrack),
+  );
+
+  const remoteUsers = useRemoteUsers(); // Get other users in the room
+  const { audioTracks } = useRemoteAudioTracks(remoteUsers); // Get audio from other users
+
+  useEffect(() => {
+    audioTracks.forEach((track) => track.play());
+  }, [audioTracks]);
+
+  // Push-to-talk start - turns mic ON to speak with the agent
   const handlePTTStart = async () => {
-    if (!audioTrackRef.current) {
-      return;
-    }
-
-    await audioTrackRef.current.setEnabled(true);
+    if (!localMicrophoneTrack) return;
+    await localMicrophoneTrack.setEnabled(true);
     setIsTalkingToAI(true);
     setAgentStatus("Listening...");
   };
 
   const handlePTTEnd = async () => {
-    if (!audioTrackRef.current) {
-      return;
-    }
-
-    await audioTrackRef.current.setEnabled(false);
+    if (!localMicrophoneTrack) return;
+    await localMicrophoneTrack.setEnabled(false);
     setIsTalkingToAI(false);
     setAgentStatus("Processing...");
   };
 
+  // AI agent flow
   useEffect(() => {
-    const init = async () => {
-      hasUserJoined.current = true;
-      const appId = process.env.NEXT_PUBLIC_AGORA_APP_ID!;
-      const channel = roomId;
+    if (!localMicrophoneTrack || hasInitializedMic.current) return;
+    hasInitializedMic.current = true;
+    localMicrophoneTrack.setEnabled(false); // mic disabled by default, gets enables only by PTT button
+  }, [localMicrophoneTrack]);
 
-      const res = await fetch(`/api/agora/token?channel=${roomId}`);
-      const data = await res.json();
+  // start AI Agent after the user joins the room- backend api to get the ai agent
+  useEffect(() => {
+    if (!isConnected || !joinedUid || hasStartedAgent.current) return;
 
-      client.on("user-published", async (user, mediaType) => {
-        await client.subscribe(user, mediaType);
+    hasStartedAgent.current = true;
 
-        if (mediaType === "video") {
-          setRemoteUsers((users) => {
-            return [...users, user];
-          });
-        }
+    const startAgent = async () => {
+      await new Promise((r) => setTimeout(r, 2000));
 
-        if (mediaType === "audio") {
-          user.audioTrack?.play();
-        }
-      });
-
-      client.on("user-unpublished", async (user, mediaType) => {
-        await client.unsubscribe(user, mediaType);
-
-        if (mediaType === "video") {
-          user.videoTrack?.stop();
-          setRemoteUsers((users) => {
-            return users.filter(function (remoteUser) {
-              return remoteUser.uid !== user.uid;
-            });
-          });
-        }
-
-        if (mediaType === "audio") {
-          user.audioTrack?.stop();
-        }
-      });
-
-      await client.join(appId, channel, data.token, data.uid);
-
-      const { audioTrack, videoTrack } = await createTracks();
-      audioTrackRef.current = audioTrack;
-      videoTrackRef.current = videoTrack;
-
-      videoTrack.play(localVideoRef.current!);
-      await client.publish([audioTrack, videoTrack]);
-      await audioTrack.setEnabled(false);
-
-      await new Promise((res) => setTimeout(res, 2000));
-
-      const response = await fetch(
-        `/api/agora/agentai?channel=${roomId}&uid=${data.uid}`,
-        {
-          method: "POST",
-        },
+      const res = await fetch(
+        `/api/agora/agentai?channel=${roomId}&uid=${joinedUid}`,
+        { method: "POST" },
       );
 
-      if (!response.ok) {
+      if (!res.ok) {
         setAgentStatus("AI unavailable");
         return;
       }
 
       setAgentStatus("Hold to talk");
     };
-    if (!hasUserJoined.current) {
-      init();
-    }
 
-    return () => {
-      audioTrackRef.current?.stop();
-      audioTrackRef.current?.close();
-      videoTrackRef.current?.stop();
-      videoTrackRef.current?.close();
-      client.leave();
-    };
-  }, [params.roomId]);
+    startAgent();
+  }, [isConnected, joinedUid, roomId]);
 
+  // UI for call and ai-agent
   return (
     <div className="h-screen bg-white flex flex-col text-black">
-      <div className="p-4 border-b border-black/8 flex justify-between bg-white">
-        <span>Room: {params.roomId}</span>
+      <div className="p-4 border-b flex justify-between">
+        <span>Room: {roomId}</span>
         <span>Status: {agentStatus}</span>
       </div>
 
       <div className="flex flex-1">
-        <div
-          ref={localVideoRef}
-          className="flex-1 bg-black flex items-center justify-center text-white"
-        ></div>
+        {/* LOCAL VIDEO */}
+        <div className="flex-1 bg-black">
+          {localCameraTrack && (
+            <LocalVideoTrack track={localCameraTrack} play />
+          )}
+        </div>
+
+        {/* REMOTE USERS */}
         <RemoteUsers remoteUsers={remoteUsers} />
 
-        <div className="w-80 border-l border-black/8 p-4 flex flex-col items-center justify-between bg-[#fafaf8]">
-          {/* AI Agent Avatar */}
-  <div className="flex flex-col items-center gap-3 mt-10">
-    <div className="w-24 h-24 rounded-full bg-black flex items-center justify-center text-white text-xl font-bold">
-      AI
-    </div>
-    <p className="text-sm text-black/56">
-      {isTalkingToAI ? "Listening..." : agentStatus}
-    </p>
-  </div>
+        {/* AI PANEL */}
+        <div className="w-80 border-l p-4 flex flex-col items-center justify-between">
+          <div className="flex flex-col items-center gap-3 mt-10">
+            <div className="w-24 h-24 rounded-full bg-black flex items-center justify-center text-white">
+              AI
+            </div>
+            <p>{isTalkingToAI ? "Listening..." : agentStatus}</p>
+          </div>
 
-          {/* Push to Talk Button */}
           <button
             onMouseDown={handlePTTStart}
             onMouseUp={handlePTTEnd}
             onTouchStart={handlePTTStart}
             onTouchEnd={handlePTTEnd}
-            className={`w-20 h-20 rounded-full flex items-center justify-center text-white text-sm font-semibold transition 
-    ${isTalkingToAI ? "bg-black scale-110" : "bg-black/80"}`}
+            className={`w-20 h-20 rounded-full text-white ${
+              isTalkingToAI ? "bg-black scale-110" : "bg-black/80"
+            }`}
           >
-            {isTalkingToAI ? "Talking" : "Hold to Talk"}
+            {isTalkingToAI ? "Talking" : "Hold"}
           </button>
 
-          <p className="text-xs text-black/38 mb-4 text-center">
-            Hold to speak with AI
-          </p>
+          <button
+            onClick={() => router.push("/")}
+            className="px-4 py-2 bg-black text-white rounded-full"
+          >
+            Leave
+          </button>
         </div>
-      </div>
-
-      <div className="p-4 border-t border-black/8 flex justify-center gap-4 bg-white">
-        <button className="px-4 py-2 bg-black text-white rounded-full">
-          Leave
-        </button>
+        {audioTracks.map((track) => (
+          <RemoteAudioTrack key={track.getTrackId()} track={track} play />
+        ))}
       </div>
     </div>
   );

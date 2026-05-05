@@ -1,29 +1,37 @@
 import { RtcTokenBuilder, RtcRole } from "agora-token";
 
-export function createToken(channelName: string, uid: number) {
+/*
+ * Generate Agora RTC Token
+ *
+ * Creates a time-bound token for a user to join a channel.
+ */
 
-  const appId = process.env.NEXT_PUBLIC_AGORA_APP_ID;
-  if (!appId) {
-    throw Error("appId not found");
-  }
-  const certificate = process.env.AGORA_APP_CERTIFICATE;
-  if (!certificate) {
-    throw Error("certificate not found");
-  }
-  const role = RtcRole.PUBLISHER;
+export function createToken(channelName: string, uid: number) {
+  const appId = process.env.AGORA_APP_ID;
+  const appCertificate = process.env.AGORA_APP_CERTIFICATE;
+
+  // Validate required credentials
+  if (!appId) throw Error("appId not found");
+  if (!appCertificate) throw Error("certificate not found");
+
+  const role = RtcRole.PUBLISHER; // allows sending audio/video
+
+  // Token validity (1 hour)
   const expirationTimeInSeconds = 3600;
   const currentTimeStamp = Math.floor(Date.now() / 1000);
-  const privilageExpireTime = currentTimeStamp + expirationTimeInSeconds;
-  const tokenExpireTime = currentTimeStamp + expirationTimeInSeconds;
+  const privilegeExpire = currentTimeStamp + expirationTimeInSeconds;
+  const tokenExpire = currentTimeStamp + expirationTimeInSeconds;
 
-  const token = RtcTokenBuilder.buildTokenWithRtm(
-  appId,
-  certificate,
-  channelName,
-  String(uid), // required conversion
-  RtcRole.PUBLISHER,
-  tokenExpireTime,
-  privilageExpireTime
-);
+  // Build token for given channel + uid
+  const token = RtcTokenBuilder.buildTokenWithUid(
+    appId,
+    appCertificate,
+    channelName,
+    uid,
+    role,
+    privilegeExpire,
+    tokenExpire,
+  );
+
   return token;
 }
