@@ -1,37 +1,100 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Callmate
 
-## Getting Started
+Callmate is a Voice AI application built using Agora's - Conversational AI Engine, this app enables user to enagage in a live chat with a voice agent
 
-First, run the development server:
+The system uses a cascading pipeline:
+speech-to-text → LLM → text-to-speech, delivering fast and context-aware responses to user queries.
+
+# Client Server Architecture
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant S as Server
+    participant A as Agora SD-RTN
+
+    %% Step 1 - Token Request
+    C->>S: Request Token
+    S-->>C: Return Token
+
+    %% Step 2 - Join Channel
+    C->>A: Join Channel (using Token)
+
+    %% Step 3 - Remote User Flow
+    A-->>C: Remote User Joined
+    C->>A: Subscribe to Remote Streams (Audio/Video)
+
+    %% Step 4 - AI Agent Join
+    C->>S: Trigger Agent Join
+    S->>A: Inject AI Agent into Channel
+    A-->>C: Agent UID / Metadata
+
+    %% Step 5 - Voice Agent Setup
+    C->>A: Subscribe to Voice Agent
+```
+## Packages in this project
+
+- `agora-rtc-react` handles room join, publish, local tracks, remote users, and remote audio hooks
+- `agora-rtc-sdk-ng` creates the RTC client used by the provider
+- `agora-token` builds the RTC token on the server
+- The room page calls `/api/agora/token` first, then joins the channel
+- After join, the room page calls `/api/agora/agentai` to connect the AI agent
+
+## Getting started
+
+1. Install dependencies:
+
+```bash
+npm install
+```
+
+2. Create a `.env` file in the project root:
+
+```env
+NEXT_PUBLIC_AGORA_APP_ID=
+AGORA_APP_ID=
+AGORA_APP_CERTIFICATE=
+AGORA_CUSTOMER_ID=
+AGORA_CUSTOMER_SECRET=
+```
+
+3. Fill the Agora values:
+
+Agora Console: https://console.agora.io
+
+- `NEXT_PUBLIC_AGORA_APP_ID`: your Agora project App ID from Agora Console
+- `AGORA_APP_ID`: same Agora App ID, used on the server
+- `AGORA_APP_CERTIFICATE`: from Agora Console under Project Management for your project. The Agora references note this under project settings and App Certificate setup.
+- `AGORA_CUSTOMER_ID`: from Agora Console under `Developer Toolkit -> RESTful API`
+- `AGORA_CUSTOMER_SECRET`: from Agora Console under `Developer Toolkit -> RESTful API`
+
+4. Start the development server:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+5. Build the project:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+npm run build
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+6. Open `http://localhost:3000`
 
-## Learn More
+## What is in the project
 
-To learn more about Next.js, take a look at the following resources:
+- `app/room/[roomId]/page.tsx`: live room with local video, remote users, and push-to-talk for AI
+- `app/api/agora/token/route.ts`: creates an Agora token for a room
+- `app/api/agora/agentai/route.ts`: asks Agora to join an AI agent to the room
+- `lib/createtoken.ts`: server token helper
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Flow
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
-# callmate
+1. User creates a new room or enters an existing room ID.
+2. User opens `/room/[roomId]`.
+3. The room page fetches an Agora token and joins the room.
+4. Camera and mic tracks are created and published.
+5. The app requests the AI agent to join the same Agora room.
+6. The user holds the button to speak to the AI.
